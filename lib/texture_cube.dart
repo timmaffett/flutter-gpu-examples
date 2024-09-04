@@ -3,9 +3,10 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:vector_math/vector_math_64.dart';
-import 'dart:ui' as ui;
 
 import 'package:flutter_gpu/gpu.dart' as gpu;
+
+import 'shaders.dart';
 
 ByteData float32(List<double> values) {
   return Float32List.fromList(values).buffer.asByteData();
@@ -24,11 +25,13 @@ ByteData float32Mat(Matrix4 matrix) {
 }
 
 class TextureCubePainter extends CustomPainter {
-  TextureCubePainter(this.time, this.seedX, this.seedY);
+  TextureCubePainter(this.time, this.seedX, this.seedY,this.scale,this.depthClearValue);
 
   double time;
   double seedX;
   double seedY;
+  double scale;
+  double depthClearValue;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -60,30 +63,26 @@ class TextureCubePainter extends CustomPainter {
     final renderTarget = gpu.RenderTarget.singleColor(
       gpu.ColorAttachment(texture: renderTexture),
       depthStencilAttachment: gpu.DepthStencilAttachment(
-          texture: depthTexture, depthClearValue: 1.0),
+          texture: depthTexture, depthClearValue: depthClearValue),
     );
 
     /// Add a render pass encoder to the command buffer so that we can start
     /// encoding commands.
-    final encoder = commandBuffer.createRenderPass(renderTarget);
-
-    /// Load a shader bundle asset.
-    final library =
-        gpu.ShaderLibrary.fromAsset('assets/TestLibrary.shaderbundle')!;
+    final pass = commandBuffer.createRenderPass(renderTarget);
 
     /// Create a RenderPipeline using shaders from the asset.
-    final vertex = library['TextureVertex']!;
-    final fragment = library['TextureFragment']!;
+    final vertex = shaderLibrary['TextureVertex']!;
+    final fragment = shaderLibrary['TextureFragment']!;
     final pipeline = gpu.gpuContext.createRenderPipeline(vertex, fragment);
 
-    encoder.bindPipeline(pipeline);
+    pass.bindPipeline(pipeline);
 
-    encoder.setDepthWriteEnable(true);
-    encoder.setDepthCompareOperation(gpu.CompareFunction.less);
+    pass.setDepthWriteEnable(true);
+    pass.setDepthCompareOperation(gpu.CompareFunction.less);
 
     /// (Optional) Configure blending for the first color attachment.
-    encoder.setColorBlendEnable(true);
-    encoder.setColorBlendEquation(gpu.ColorBlendEquation(
+    pass.setColorBlendEnable(true);
+    pass.setColorBlendEquation(gpu.ColorBlendEquation(
         colorBlendOperation: gpu.BlendOperation.add,
         sourceColorBlendFactor: gpu.BlendFactor.one,
         destinationColorBlendFactor: gpu.BlendFactor.oneMinusSourceAlpha,
@@ -93,7 +92,7 @@ class TextureCubePainter extends CustomPainter {
 
     /// Append quick geometry and uniforms to a host buffer that will be
     /// automatically uploaded to the GPU later on.
-    final transients = gpu.HostBuffer();
+    final transients = gpu.gpuContext.createHostBuffer();
     final vertices = transients.emplace(float32(<double>[
       -1, -1, -1, /* */ 0, 0, /* */ 1, 0, 0, 1, //
       1, -1, -1, /*  */ 1, 0, /* */ 0, 1, 0, 1, //
@@ -120,18 +119,19 @@ class TextureCubePainter extends CustomPainter {
         ) *
         Matrix4.rotationX(time) *
         Matrix4.rotationY(time * seedX) *
-        Matrix4.rotationZ(time * seedY)));
-
+        Matrix4.rotationZ(time * seedY) *
+        Matrix4.diagonal3( Vector3(scale,scale,scale))
+      ));   
     /// Bind the vertex and index buffer.
-    encoder.bindVertexBuffer(vertices, 8);
-    encoder.bindIndexBuffer(indices, gpu.IndexType.int16, 36);
+    pass.bindVertexBuffer(vertices, 8);
+    pass.bindIndexBuffer(indices, gpu.IndexType.int16, 36);
 
     /// Bind the host buffer data we just created to the vertex shader's uniform
     /// slots. Although the locations are specified in the shader and are
     /// predictable, we can optionally fetch the uniform slots by name for
     /// convenience.
-    final mvpSlot = pipeline.vertexShader.getUniformSlot('mvp')!;
-    encoder.bindUniform(mvpSlot, mvp);
+    final frameInfoSlot = vertex.getUniformSlot('FrameInfo');
+    pass.bindUniform(frameInfoSlot, mvp);
 
     final sampledTexture = gpu.gpuContext.createTexture(
         gpu.StorageMode.hostVisible, 5, 5,
@@ -144,11 +144,11 @@ class TextureCubePainter extends CustomPainter {
       0xFFFFFFFF, 0x00000000, 0xFFFFFFFF, 0x00000000, 0xFFFFFFFF, //
     ]));
 
-    final texSlot = pipeline.fragmentShader.getUniformSlot('tex')!;
-    encoder.bindTexture(texSlot, sampledTexture);
+    final texSlot = pipeline.fragmentShader.getUniformSlot('tex');
+    pass.bindTexture(texSlot, sampledTexture);
 
     /// And finally, we append a draw call.
-    encoder.draw();
+    pass.draw();
 
     /// Submit all of the previously encoded passes. Passes are encoded in the
     /// same order they were created in.
@@ -179,6 +179,8 @@ class _TextureCubePageState extends State<TextureCubePage> {
   double deltaSeconds = 0;
   double seedX = -0.512511498387847167;
   double seedY = 0.521295573094847167;
+  double scale = 1.0;
+  double depthClearValue = 1.0;
 
   @override
   void initState() {
@@ -209,8 +211,18 @@ class _TextureCubePageState extends State<TextureCubePage> {
             max: 1,
             min: -1,
             onChanged: (value) => {setState(() => seedY = value)}),
+        Slider(
+            value: scale,
+            max: 3,
+            min: 0.1,
+            onChanged: (value) => {setState(() => scale = value)}),
+        Slider(
+            value: depthClearValue,
+            max: 1,
+            min: 0,
+            onChanged: (value) => {setState(() => depthClearValue = value)}),
         CustomPaint(
-          painter: TextureCubePainter(time, seedX, seedY),
+          painter: TextureCubePainter(time, seedX, seedY, scale, depthClearValue),
         ),
       ],
     );
