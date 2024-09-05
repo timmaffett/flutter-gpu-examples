@@ -18,39 +18,53 @@ class JuliaSetPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final gpu.Texture? texture =
-        gpu.gpuContext.createTexture(gpu.StorageMode.hostVisible, 3, 3);
+        gpu.gpuContext.createTexture(gpu.StorageMode.hostVisible, 21, 9);  // keep width odd
     if (texture == null) {
       return;
     }
 
-    texture!.overwrite(Uint32List.fromList(<int>[
-      0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, //
-      0xFF000000, 0xFFFFFFFF, 0xFF000000, //
-      0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, //
-    ]).buffer.asByteData());
+    // Illustrating creating a texture and using that to create image
+    // The are arbitrary methods of filling buffer and transferring it to the texture
+    // so that it changes via time and the sliders.  
+    if(seedX>0.0) {
+      // flashing CHECKER BOARD of any size (works as long as width is odd)
+      texture.overwrite(Uint32List.fromList(
+        
+        List<int>.generate(texture.width*texture.height, (int index) {
+            int onColor = seedY<0 ? (0xFF*seedY).toInt() | 0x00FFFF00 :
+                          (0xFF*-seedY).toInt()<<8 | 0x00FF00FF;
+            return index.isEven ?  (time.toInt().isEven ? onColor : 0xFF000000) : (time.toInt().isEven ? 0xFF000000 :onColor);
+        }, growable: false) ).buffer.asByteData());
+      //(oldway) fixed 3x3 checkerboard
+      //texture.overwrite(Uint32List.fromList(<int>[
+      //  0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, //
+      //  0xFF000000, 0xFFFFFFFF, 0xFF000000, //
+      //  0xFFFFFFFF, 0xFF000000, 0xFFFFFFFF, //
+      //]).buffer.asByteData());
+    } else {
+      var buffer = Int32List(texture.width * texture.height);
+      for (int i = 0; i < buffer.length; i++) {
+        int xi = i % texture.width;
+        int yi = i ~/ texture.width;
+        double x = (xi.toDouble() - texture.width / 2) / (texture.width * 0.75);
+        double y = (yi.toDouble() - texture.height / 2) / (texture.height * 0.75);
+        int iterations = 0;
+        for (int it = 0; it < maxIterations; it++) {
+          // Square the complex number and add the seed offset.
+          double newX = x * x - y * y + seedX;
+          y = 2 * x * y + seedY;
+          x = newX;
+          if (x * x + y * y > escapeDistance * escapeDistance) {
+            iterations = it;
+            break;
+          }
+        }
+        int shade = (iterations / maxIterations * 0xFF).toInt();
+        buffer[i] = Color.fromARGB(0xFF, (shade*time).toInt(), (seedX*time).toInt(), (seedY*time).toInt()).value;
+      }
 
-    //var buffer = Int32List(texture.width * texture.height);
-    //for (int i = 0; i < buffer.length; i++) {
-    //  int xi = i % texture.width;
-    //  int yi = i ~/ texture.width;
-    //  double x = (xi.toDouble() - texture.width / 2) / (texture.width * 0.75);
-    //  double y = (yi.toDouble() - texture.height / 2) / (texture.height * 0.75);
-    //  int iterations = 0;
-    //  for (int it = 0; it < maxIterations; it++) {
-    //    // Square the complex number and add the seed offset.
-    //    double newX = x * x - y * y + seedX;
-    //    y = 2 * x * y + seedY;
-    //    x = newX;
-    //    if (x * x + y * y > escapeDistance * escapeDistance) {
-    //      iterations = it;
-    //      break;
-    //    }
-    //  }
-    //  int shade = (iterations / maxIterations * 0xFF).toInt();
-    //  buffer[i] = Color.fromARGB(0xFF, shade, shade, shade).value;
-    //}
-
-    //texture.overwrite(buffer.buffer.asByteData());
+      texture.overwrite(buffer.buffer.asByteData());
+    }
 
     final ui.Image image = texture.asImage();
 

@@ -21,7 +21,6 @@ class MyApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
         useMaterial3: true,
       ),
-      //home: const JuliaSetPage(title: 'Julia'),
       home: const DemoPage(),
     );
   }
@@ -45,7 +44,12 @@ class _DemoPageState extends State<DemoPage> {
       const TrianglePage(),
       const JuliaSetPage()
     ];
-
+    final widgetsNames = <String>[
+      'ColorsPage() - vert/uniform example',
+      'TextureCubePage() - vert/indices/uniform/texture/depth example',
+      'TrianglePage() - vert/uniform example',
+      'JuliaSetPage() - Texture example'
+    ];
     return Scaffold(
       appBar: AppBar(
         title: Row(
@@ -60,9 +64,9 @@ class _DemoPageState extends State<DemoPage> {
                 icon: const Icon(Icons.arrow_back_ios),
               ),
             ),
-            const Expanded(
+            Expanded(
                 child: Text(
-              'GPU demo',
+              'GPU demo ${widgetsNames[widgetIndex]}',
               textAlign: TextAlign.center,
             )),
             AnimatedOpacity(

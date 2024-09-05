@@ -2,10 +2,10 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
-import 'package:vector_math/vector_math_64.dart';
-import 'dart:ui' as ui;
 
 import 'package:flutter_gpu/gpu.dart' as gpu;
+
+import 'shaders.dart';
 
 ByteData float32(List<double> values) {
   return Float32List.fromList(values).buffer.asByteData();
@@ -56,21 +56,18 @@ class TrianglePainter extends CustomPainter {
 
     /// Add a render pass encoder to the command buffer so that we can start
     /// encoding commands.
-    final encoder = commandBuffer.createRenderPass(renderTarget);
-
-    /// Load a shader bundle asset.
-    final library = gpu.ShaderLibrary.fromAsset('assets/TestLibrary.shaderbundle')!;
+    final pass = commandBuffer.createRenderPass(renderTarget);
 
     /// Create a RenderPipeline using shaders from the asset.
-    final vertex = library['UnlitVertex']!;
-    final fragment = library['UnlitFragment']!;
+    final vertex = shaderLibrary['UnlitVertex']!;
+    final fragment = shaderLibrary['UnlitFragment']!;
     final pipeline = gpu.gpuContext.createRenderPipeline(vertex, fragment);
 
-    encoder.bindPipeline(pipeline);
+    pass.bindPipeline(pipeline);
 
     /// (Optional) Configure blending for the first color attachment.
-    encoder.setColorBlendEnable(true);
-    encoder.setColorBlendEquation(gpu.ColorBlendEquation(
+    pass.setColorBlendEnable(true);
+    pass.setColorBlendEquation(gpu.ColorBlendEquation(
         colorBlendOperation: gpu.BlendOperation.add,
         sourceColorBlendFactor: gpu.BlendFactor.one,
         destinationColorBlendFactor: gpu.BlendFactor.oneMinusSourceAlpha,
@@ -80,12 +77,20 @@ class TrianglePainter extends CustomPainter {
 
     /// Append quick geometry and uniforms to a host buffer that will be
     /// automatically uploaded to the GPU later on.
-    final transients = gpu.HostBuffer();
+    final transients = gpu.gpuContext.createHostBuffer();
     final vertices = transients.emplace(float32(<double>[
       -0.5, -0.5, //
       0, 0.5, //
       0.5, -0.5, //
     ]));
+    
+
+    /// Bind the vertex data. In this case, we won't bother binding an index
+    /// buffer.
+    pass.bindVertexBuffer(vertices, 3);
+
+    /* PreVulkanSupport - no longer possible because Vulkan has poor Uniform support
+    and we can only do a single blob...
     final color = transients.emplace(float32(<double>[0, 1, 0, 1])); // rgba
     final mvp = transients.emplace(float32Mat(Matrix4(
           1, 0, 0, 0, //
@@ -97,21 +102,57 @@ class TrianglePainter extends CustomPainter {
         Matrix4.rotationY(time * seedX) *
         Matrix4.rotationZ(time * seedY)));
 
-    /// Bind the vertex data. In this case, we won't bother binding an index
-    /// buffer.
-    encoder.bindVertexBuffer(vertices, 3);
-
     /// Bind the host buffer data we just created to the vertex shader's uniform
     /// slots. Although the locations are specified in the shader and are
     /// predictable, we can optionally fetch the uniform slots by name for
     /// convenience.
     final mvpSlot = pipeline.vertexShader.getUniformSlot('mvp')!;
     final colorSlot = pipeline.vertexShader.getUniformSlot('color')!;
-    encoder.bindUniform(mvpSlot, mvp);
-    encoder.bindUniform(colorSlot, color);
+    pass.bindUniform(mvpSlot, mvp);
+    pass.bindUniform(colorSlot, color);
+    PreVulkanSupport */
+
+    final mvp = Matrix4(
+          1, 0, 0, 0, //
+          0, 1, 0, 0, //
+          0, 0, 1, 0, //
+          0, 0, 0.5, 1, //
+        ) *
+        Matrix4.rotationX(time) *
+        Matrix4.rotationY(time * seedX) *
+        Matrix4.rotationZ(time * seedY);
+    final color = <double>[0, 1, 0, 1]; // rgba
+    // We must manually map the members of the 'FrameInfo' uniform struct with the
+    // corresponding float data
+    final frameInfoSlot = vertex.getUniformSlot('FrameInfo');
+    final frameInfoFloats = Float32List.fromList([
+      mvp.storage[0],
+      mvp.storage[1],
+      mvp.storage[2],
+      mvp.storage[3],
+      mvp.storage[4],
+      mvp.storage[5],
+      mvp.storage[6],
+      mvp.storage[7],
+      mvp.storage[8],
+      mvp.storage[9],
+      mvp.storage[10],
+      mvp.storage[11],
+      mvp.storage[12],
+      mvp.storage[13],
+      mvp.storage[14],
+      mvp.storage[15],
+      color[0], // r 
+      color[1], // g
+      color[2], // b
+      color[3], // a
+    ]);
+    final frameInfoView =
+        transients.emplace(frameInfoFloats.buffer.asByteData());
+    pass.bindUniform(frameInfoSlot, frameInfoView);
 
     /// And finally, we append a draw call.
-    encoder.draw();
+    pass.draw();
 
     /// Submit all of the previously encoded passes. Passes are encoded in the
     /// same order they were created in.
